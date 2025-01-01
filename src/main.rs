@@ -2,7 +2,6 @@
 #![no_main]
 
 mod string_to_keys;
-use string_to_keys::string_to_keys;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -10,13 +9,11 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_rp::bind_interrupts;
-use embassy_rp::gpio::{Input, Pull};
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::{Driver, InterruptHandler};
 use embassy_time::Timer;
-use embassy_usb::class::hid::{HidReaderWriter, HidWriter, ReportId, RequestHandler, State};
+use embassy_usb::class::hid::{HidReaderWriter, ReportId, RequestHandler, State};
 use embassy_usb::control::OutResponse;
-use embassy_usb::driver::EndpointError;
 use embassy_usb::{Builder, Config, Handler};
 use usbd_hid::descriptor::{KeyboardReport, KeyboardUsage, SerializedDescriptor};
 use {defmt_rtt as _, panic_probe as _};
@@ -25,6 +22,7 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
 });
 
+// For meta keys, see https://gist.github.com/ekaitz-zarraga/2b25b94b711684ba4e969e5a5723969b#file-usb_hid_keys-h-L19-L26
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
@@ -36,8 +34,6 @@ async fn main(_spawner: Spawner) {
     config.manufacturer = Some("Embassy");
     config.product = Some("HID keyboard example");
     config.serial_number = Some("12345678");
-    config.max_power = 100;
-    config.max_packet_size_0 = 64;
 
     // Create embassy-usb DeviceBuilder using the driver and config.
     // It needs some buffers for building the descriptors.
@@ -66,7 +62,7 @@ async fn main(_spawner: Spawner) {
     let config = embassy_usb::class::hid::Config {
         report_descriptor: KeyboardReport::desc(),
         request_handler: None,
-        poll_ms: 60,
+        poll_ms: 20,
         max_packet_size: 64,
     };
     let hid = HidReaderWriter::<_, 1, 8>::new(&mut builder, &mut state, config);
@@ -79,25 +75,32 @@ async fn main(_spawner: Spawner) {
 
     let (reader, mut writer) = hid.split();
 
-    let mut output_buffer = [(0u8, false); 64];
-
-    let input = "https://www.youtube.com/watch?v=E4WlUXrJgy4";
-    let count = string_to_keys::string_to_keys(input, &mut output_buffer);
     let in_fut = async {
         info!("Sending...");
         Timer::after_millis(2_000).await;
 
+        // Meta + R
         let report = KeyboardReport {
-            modifier: 0,
+            modifier: 8, // L_META
             reserved: 0,
             leds: 0,
-            keycodes: [KeyboardUsage::KeyboardLeftGUI as u8, 0, 0, 0, 0, 0],
+            keycodes: [KeyboardUsage::KeyboardRr as u8, 0, 0, 0, 0, 0],
         };
         match writer.write_serialize(&report).await {
             Ok(()) => {}
             Err(e) => warn!("Failed to send report: {:?}", e),
         };
+        let report = KeyboardReport::default();
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        Timer::after_millis(500).await;
 
+        // Write out MS Edge
+        let input = "microsoft-edge://";
+        let mut output_buffer = [(0u8, false); 64];
+        let count = string_to_keys::string_to_keys(input, &mut output_buffer);
         for &key in &output_buffer[..count] {
             let modifier = if key.1 { 2 } else { 0 }; // Add shift or not
             let report = KeyboardReport {
@@ -115,8 +118,101 @@ async fn main(_spawner: Spawner) {
                 Ok(()) => {}
                 Err(e) => warn!("Failed to send report: {:?}", e),
             };
-            // Timer::after_millis(2).await;
         }
+
+        // Enter
+        let report = KeyboardReport {
+            modifier: 0,
+            reserved: 0,
+            leds: 0,
+            keycodes: [KeyboardUsage::KeyboardEnter as u8, 0, 0, 0, 0, 0],
+        };
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        let report = KeyboardReport::default();
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        Timer::after_millis(4_000).await; // Wait for MS edge to open
+
+        // Ctrl + L
+        let report = KeyboardReport {
+            modifier: 1, // CTRL
+            reserved: 0,
+            leds: 0,
+            keycodes: [KeyboardUsage::KeyboardLl as u8, 0, 0, 0, 0, 0],
+        };
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        let report = KeyboardReport::default();
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        Timer::after_millis(100).await;
+
+        // Write out YouTube URL
+        let input = "https://www.youtube.com/watch?v=E4WlUXrJgy4";
+        let mut output_buffer = [(0u8, false); 64];
+        let count = string_to_keys::string_to_keys(input, &mut output_buffer);
+        for &key in &output_buffer[..count] {
+            let modifier = if key.1 { 2 } else { 0 }; // Add shift or not
+            let report = KeyboardReport {
+                modifier,
+                reserved: 0,
+                leds: 0,
+                keycodes: [key.0, 0, 0, 0, 0, 0],
+            };
+            match writer.write_serialize(&report).await {
+                Ok(()) => {}
+                Err(e) => warn!("Failed to send report: {:?}", e),
+            };
+            let report = KeyboardReport::default();
+            match writer.write_serialize(&report).await {
+                Ok(()) => {}
+                Err(e) => warn!("Failed to send report: {:?}", e),
+            };
+        }
+
+        // Enter
+        let report = KeyboardReport {
+            modifier: 0,
+            reserved: 0,
+            leds: 0,
+            keycodes: [KeyboardUsage::KeyboardEnter as u8, 0, 0, 0, 0, 0],
+        };
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        let report = KeyboardReport::default();
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        Timer::after_millis(4_000).await; // Wait for the page to load
+
+        // Press play
+        let report = KeyboardReport {
+            modifier: 0,
+            reserved: 0,
+            leds: 0,
+            keycodes: [KeyboardUsage::KeyboardKk as u8, 0, 0, 0, 0, 0],
+        };
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
+        let report = KeyboardReport::default();
+        match writer.write_serialize(&report).await {
+            Ok(()) => {}
+            Err(e) => warn!("Failed to send report: {:?}", e),
+        };
     };
 
     let out_fut = async {
@@ -129,15 +225,6 @@ async fn main(_spawner: Spawner) {
     loop {
         defmt::info!("Blink");
         Timer::after_millis(500).await;
-    }
-}
-
-fn get_key(key: KeyboardUsage) -> KeyboardReport {
-    KeyboardReport {
-        modifier: 0,
-        reserved: 0,
-        leds: 0,
-        keycodes: [key as u8, 0, 0, 0, 0, 0],
     }
 }
 
