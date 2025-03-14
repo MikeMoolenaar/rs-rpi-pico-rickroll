@@ -136,7 +136,7 @@ async fn main(_spawner: Spawner) {
             Ok(()) => {}
             Err(e) => warn!("Failed to send report: {:?}", e),
         };
-        Timer::after_millis(4_000).await; // Wait for MS edge to open
+        Timer::after_millis(3_000).await; // Wait for MS edge to open
 
         // Ctrl + L
         let report = KeyboardReport {
@@ -195,7 +195,7 @@ async fn main(_spawner: Spawner) {
             Ok(()) => {}
             Err(e) => warn!("Failed to send report: {:?}", e),
         };
-        Timer::after_millis(4_000).await; // Wait for the page to load
+        Timer::after_millis(3_000).await; // Wait for the page to load
 
         // Press play
         let report = KeyboardReport {
